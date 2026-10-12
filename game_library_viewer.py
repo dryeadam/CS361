@@ -13,10 +13,6 @@ class app(ctk.CTk):
         self.game_dir = ""
         self.games = []
 
-        self.zmq_context = zmq.Context()
-        self.sort_socket = self.zmq_context.socket(zmq.REQ)
-        self.sort_socket.connect("tcp://localhost:5556")
-
         # Window Setup
         self.title("Game Library Viewer")
         self.geometry("1280x720")
@@ -89,14 +85,35 @@ class app(ctk.CTk):
         )
         self.save_settings_btn.grid(row=0, column=3, padx=5, pady=5)
 
+    def ask_service(self, port, data):
+        socket = zmq.Context().socket(zmq.REQ)
+        socket.setsockopt(zmq.RCVTIMEO, 2000)
+        socket.setsockopt(zmq.LINGER, 0)
+        socket.connect(f"tcp://localhost:{port}")
+        try:
+            socket.send_pyobj(data)
+            return socket.recv_pyobj()
+        except zmq.Again:
+            print(f"Service on port {port} not responding")
+            return None
+        finally:
+            socket.close()
+
     def alph_sort(self):
-        self.sort_socket.send_pyobj(self.games)
-        self.games = self.sort_socket.recv_pyobj()
-        self.display_games()
+        result = self.ask_service(5556, self.games)
+        print(f"Sending request to alph_sort on port 5556.")
+        if result:
+            self.games = result
+            print(f"alph_sort received, updating display...")
+            self.display_games()
 
     def size_sort(self):
-        pass
-
+        result = self.ask_service(5557, self.games)
+        print(f"Sending request to alph_sort on port 5557.")
+        if result:
+            self.games = result
+            print(f"size_sort received, updating display...")
+            self.display_games()
     def on_game_click(self, game_name):
         pass
 
