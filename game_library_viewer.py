@@ -5,6 +5,10 @@ import customtkinter as ctk
 from tkinter import filedialog
 import zmq
 
+SORT_PORT = 5556
+STATS_PORT = 5559
+
+
 class app(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -160,13 +164,16 @@ class app(ctk.CTk):
         )
         # self.size_sort_btn.grid(row=0, column=3, padx=5, pady=5)
 
-    def ask_service(self, port, data, timeout=2000):
-        socket = zmq.Context().socket(zmq.REQ)
+    def ask_service(self, port, request, timeout=2000):
+        """Send a JSON-serializable request to the service on `port` and
+        return its JSON reply. Returns None if the service doesn't answer."""
+        socket = zmq.Context.instance().socket(zmq.REQ)
         socket.setsockopt(zmq.RCVTIMEO, timeout)
+        socket.setsockopt(zmq.SNDTIMEO, timeout)
         socket.connect(f"tcp://localhost:{port}")
         try:
-            socket.send_pyobj(data)
-            return socket.recv_pyobj()
+            socket.send_json(request)
+            return socket.recv_json()
         except zmq.Again:
             print(f"Service on port {port} not responding.")
             return None
@@ -174,20 +181,23 @@ class app(ctk.CTk):
             socket.close()
 
     def ask_service_sorting(self, data, key, timeout=2000):
-        socket = zmq.Context().socket(zmq.REQ)
-        socket.setsockopt(zmq.RCVTIMEO, timeout)
-        socket.connect(f"tcp://localhost:5556")
-        try:
-            socket.send_json([key, data])
-            return socket.recv_json()
-        except zmq.Again:
-            print(f"Service on port 5556 not responding.")
+        # Sorting service expects [key, data]
+        return self.ask_service(SORT_PORT, [key, data], timeout)
+
+    def ask_service_stats(self, data, operation, field, timeout=2000):
+        # Stats service expects {data: [dicts], operation, field}
+        request = {"data": data, "operation": operation, "field": field}
+        response = self.ask_service(STATS_PORT, request, timeout)
+
+        if response is None:
             return None
-        finally:
-            socket.close()
+        if "error" in response:
+            print(f"Stats service error: {response['error']}")
+            return None
+        return response["result"]
 
     def alph_sort(self):
-        print(f"Sending request to sorting_microservice on port 5556...")
+        print(f"Sending request to sorting_microservice on port {SORT_PORT}...")
         for game_dir, game_list in self.games.items():
             result = self.ask_service_sorting(game_list, "ALPH")
             if result:
@@ -196,7 +206,7 @@ class app(ctk.CTk):
         self.display_games()
 
     def size_sort(self):
-        print("Sending request to sorting_microservice on port 5556....")
+        print(f"Sending request to sorting_microservice on port {SORT_PORT}....")
         for game_dir, game_list in self.games.items():
             game_paths = [f"{game_dir}/{game}" for game in game_list]
             result = self.ask_service_sorting(game_paths, "SIZE")
@@ -253,7 +263,7 @@ class app(ctk.CTk):
         self.error_frame.after(4000, self.error_frame.lower)
 
     def add_game_dir(self):
-        game_dir = filedialog.askdirectory()
+        game_dir = filedialog.askdirectory(title="Choose a folder to see your games...")
         if os.path.isdir(game_dir):
             if game_dir in self.games:
                 self.dir_error("already added", game_dir)
